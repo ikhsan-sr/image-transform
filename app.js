@@ -3,6 +3,7 @@ const express = require('express');
 const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
+const cors = require('cors');
 const axios = require('axios');
 
 const app = express();
@@ -22,13 +23,6 @@ app.use(express.json());
 app.use(cors());
 app.use('/compressed', express.static(IMAGE_DIRECTORY));
 
-function cors() {
-  return function(req, res, next) {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-    next();
-  };
-}
 
 async function downloadImage(url) {
   try {
