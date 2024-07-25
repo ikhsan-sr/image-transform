@@ -60,8 +60,9 @@ async function compressImage(buffer, outputPath, width, quality, format = 'origi
   }
 }
 
-app.get('/', (req, res) => res.send(`Hello, World! ${process.env.SECRET_KEY}`));
-
+app.get('/', function(req, res) {
+  res.sendFile(path.join(__dirname, '/index.html'));
+});
 app.get('/compress', async (req, res) => {
   const { url } = req.query;
 
