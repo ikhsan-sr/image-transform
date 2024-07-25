@@ -5,11 +5,13 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const axios = require('axios');
+const AWS = require('aws-sdk');
+const mime = require('mime-types')
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const IMAGE_DIRECTORY = path.join(__dirname, 'compressed');
+const IMAGE_DIRECTORY = 'images/compressed';
 
 const SIZES = [
   { size: 'xs', width: 62, quality: 80 }, // foto profil
@@ -19,10 +21,15 @@ const SIZES = [
 ];
 const MAX_SIZE = 2500;
 
+// AWS S3 Configuration
+const s3 = new AWS.S3({
+  endpoint: process.env.AWS_HOSTNAME,
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+});
+
 app.use(express.json());
 app.use(cors());
-app.use('/compressed', express.static(IMAGE_DIRECTORY));
-
 
 async function downloadImage(url) {
   try {
@@ -37,22 +44,31 @@ async function downloadImage(url) {
   }
 }
 
-function saveImage(buffer, filePath) {
-  try {
-    fs.writeFileSync(filePath, buffer);
-  } catch (error) {
-    console.error('Error saving image to file:', error);
-    throw new Error('Failed to save image');
-  }
+async function uploadToS3(buffer, key) {
+  return new Promise((resolve, reject) => {
+    s3.upload({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: key,
+      Body: buffer,
+      ContentType: mime.lookup(key) || 'image/jpeg',
+      ACL: 'public-read'
+    }, (err, data) => {
+      if (err) {
+        console.error('Error uploading image to S3:', err);
+        return reject(new Error('Failed to upload image'));
+      }
+      resolve(data.Location);
+    });
+  });
 }
 
-async function compressImage(buffer, outputPath, width, quality, format = 'original') {
+async function compressImage(buffer, width, quality, format = 'original') {
   try {
     const transformer = sharp(buffer).resize(width);
     if (format === 'webp') {
-      await transformer.webp({ quality }).toFile(outputPath);
+      return await transformer.webp({ quality }).toBuffer();
     } else {
-      await transformer.toFile(outputPath);
+      return await transformer.toBuffer();
     }
   } catch (error) {
     console.error('Error compressing image:', error);
@@ -63,6 +79,7 @@ async function compressImage(buffer, outputPath, width, quality, format = 'origi
 app.get('/', function(req, res) {
   res.sendFile(path.join(__dirname, '/index.html'));
 });
+
 app.get('/compress', async (req, res) => {
   const { url } = req.query;
 
@@ -76,28 +93,31 @@ app.get('/compress', async (req, res) => {
     const originalExt = path.extname(url).split('.').pop();
     const encodedUri = encodeURIComponent(filename);
 
-    // Save original image
-    const originalPath = path.join(IMAGE_DIRECTORY, `${encodedUri}.${originalExt}`);
-    saveImage(originalBuffer, originalPath);
+    // Upload original image
+    const originalKey = `${IMAGE_DIRECTORY}/${encodedUri}.${originalExt}`;
+    await uploadToS3(originalBuffer, originalKey);
 
     const outputUrls = {
-      max: `http://localhost:${PORT}/compressed/${encodedUri}_max.${originalExt}`
+      max: `${process.env.AWS_HOSTNAME}/${process.env.AWS_BUCKET_NAME}/${IMAGE_DIRECTORY}/${encodedUri}_max.${originalExt}`
     };
 
     // Compress image to max size
-    const maxOutputPath = path.join(IMAGE_DIRECTORY, `${encodedUri}_max.${originalExt}`);
-    await compressImage(originalBuffer, maxOutputPath, MAX_SIZE, 80);
+    const maxBuffer = await compressImage(originalBuffer, MAX_SIZE, 80);
+    const maxKey = `${IMAGE_DIRECTORY}/${encodedUri}_max.${originalExt}`;
+    await uploadToS3(maxBuffer, maxKey);
 
     // Compress to predefined sizes
     for (const { size, width, quality } of SIZES) {
-      const outputPathWebP = path.join(IMAGE_DIRECTORY, `${encodedUri}_${size}.webp`);
-      const outputPathOriginal = path.join(IMAGE_DIRECTORY, `${encodedUri}_${size}.${originalExt}`);
-      
-      await compressImage(originalBuffer, outputPathWebP, width, quality, 'webp');
-      await compressImage(originalBuffer, outputPathOriginal, width, quality);
+      const outputBufferWebP = await compressImage(originalBuffer, width, quality, 'webp');
+      const outputKeyWebP = `${IMAGE_DIRECTORY}/${encodedUri}_${size}.webp`;
+      await uploadToS3(outputBufferWebP, outputKeyWebP);
 
-      outputUrls[size] = `http://localhost:${PORT}/compressed/${encodedUri}_${size}.${originalExt}`;
-      outputUrls[`${size}_webp`] = `http://localhost:${PORT}/compressed/${encodedUri}_${size}.webp`;
+      const outputBufferOriginal = await compressImage(originalBuffer, width, quality);
+      const outputKeyOriginal = `${IMAGE_DIRECTORY}/${encodedUri}_${size}.${originalExt}`;
+      await uploadToS3(outputBufferOriginal, outputKeyOriginal);
+
+      outputUrls[size] = `${process.env.AWS_HOSTNAME}/${process.env.AWS_BUCKET_NAME}/${IMAGE_DIRECTORY}/${encodedUri}_${size}.${originalExt}`;
+      outputUrls[`${size}_webp`] = `${process.env.AWS_HOSTNAME}/${process.env.AWS_BUCKET_NAME}/${IMAGE_DIRECTORY}/${encodedUri}_${size}.webp`;
     }
 
     res.json(outputUrls);
