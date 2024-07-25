@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "start": "node app"
+    "start": "node index"
   },
   "dependencies": {
     "aws-sdk": "^2.1663.0",
