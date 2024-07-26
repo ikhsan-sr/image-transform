@@ -6,6 +6,7 @@ const { uploadToS3 } = require('../helpers/s3Helper');
 const { compressImage } = require('../helpers/imageHelper');
 const { downloadImage } = require('../utils/downloadUtils');
 const { createResponse } = require('../utils/responseUtils');
+const { validateImageUrl } = require('../utils/validationUtils');
 
 const { IMAGE_DIRECTORY, MAX_SIZE } = require('../constants/imageConstants');
 const SIZES = require('../constants/sizeConstants');
@@ -19,7 +20,10 @@ router.get('/', (req, res) => {
 router.get('/compress', async (req, res, next) => {
   const { url } = req.query;
 
-  if (!url) return res.json(createResponse(400, 'URL is required!', null));
+  // Validasi URL gambar
+  const { isValid, message } = await validateImageUrl(url);
+
+  if (!isValid) return res.status(400).json(createResponse(400, message));
 
   try {
     const originalBuffer = await downloadImage(url);
