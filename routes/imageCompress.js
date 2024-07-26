@@ -1,9 +1,11 @@
 const express = require('express');
 const path = require('path');
+const sizeOf = require('buffer-image-size');
 
-const { downloadImage } = require('../utils/downloadUtils');
-const { compressImage } = require('../helpers/imageHelper');
 const { uploadToS3 } = require('../helpers/s3Helper');
+const { compressImage } = require('../helpers/imageHelper');
+const { downloadImage } = require('../utils/downloadUtils');
+const { createResponse } = require('../utils/responseUtils');
 
 const { IMAGE_DIRECTORY, MAX_SIZE } = require('../constants/imageConstants');
 const SIZES = require('../constants/sizeConstants');
@@ -17,12 +19,11 @@ router.get('/', (req, res) => {
 router.get('/compress', async (req, res, next) => {
   const { url } = req.query;
 
-  if (!url) {
-    return res.status(400).send('URL is required');
-  }
+  if (!url) return res.json(createResponse(400, 'URL is required!', null));
 
   try {
     const originalBuffer = await downloadImage(url);
+    const originalWidth = sizeOf(originalBuffer)?.width;
     const filename = path.basename(url, path.extname(url));
     const originalExt = path.extname(url).split('.').pop();
     const encodedUri = encodeURIComponent(filename);
@@ -36,7 +37,7 @@ router.get('/compress', async (req, res, next) => {
 
     const maxBuffer = await compressImage(originalBuffer, MAX_SIZE, 80);
     const maxKey = `${IMAGE_DIRECTORY}/${encodedUri}_max.${originalExt}`;
-    await uploadToS3(maxBuffer, maxKey);
+    await uploadToS3( originalWidth > MAX_SIZE ? maxBuffer : originalBuffer, maxKey);
 
     await Promise.all(SIZES.map(async ({ size, width, quality }) => {
       const outputBufferWebP = await compressImage(originalBuffer, width, quality, 'webp');
@@ -51,7 +52,7 @@ router.get('/compress', async (req, res, next) => {
       outputUrls[`${size}_webp`] = `${process.env.AWS_HOSTNAME}/${process.env.AWS_BUCKET_NAME}/${IMAGE_DIRECTORY}/${encodedUri}_${size}.webp`;
     }));
 
-    res.json(outputUrls);
+    res.json(createResponse(200, 'Success compress image!', outputUrls));
   } catch (error) {
     next(error);
   }
